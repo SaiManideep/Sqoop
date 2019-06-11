@@ -1,0 +1,200 @@
+LIST DATABASES
+sqoop list-databases \
+	--connect jdbc:mysql://localhost/ \
+	--username root \
+	--password cloudera (or -P or --password-file) 
+
+LIST TABLES
+sqoop list-tables \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	--password cloudera
+
+EVAL
+sqoop eval \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	--password cloudera \
+	--query "SELECT * FROM orders"
+
+sqoop eval \
+	--connect jdbc:mysql://localhost/ \
+	--username root \
+	--password cloudera \
+	-e "CREATE DATABASE retail_export"
+
+IMPORT
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root
+	--password cloudera \
+	--table order_items \
+	--target-dir /user/mandy/sqoop_import/retail_db/order_items
+
+IMPORT LIFE CYCLE:
+Prepare to use MySQL streaming resultset
+Code generation - MapReduce Java code
+Understand structure of data. -> select a row from the table along with column names. Get metadata
+Create table_name.java
+Create table_name.jar
+Begin import
+Connect to ResourceManager
+Connect to ApplicationMaster
+Run query to get minimum and maximum values of primary key (BoundaryValues). If primary key does not exist, import will not work unless the number of mappers is 1. Can also use split-by control argument.
+Default number of threads (maps) = 4. Can change by using -m or --num-mappers
+Using boundary values, split size is determined. (Max - min)/num-mappers
+Submit query
+
+MORE options
+
+--delete-target-dir to overwrite
+--append to append to existing dataset
+--split-by column name to split. Rules are column should be indexed. Values in the columns should be sparse and also as evenly distributed as possible (Sequential will work best, else data split might be skewed). NULL values should not be there, else, those records might be ignored.
+-Dorg.apache.sqoop.splitter.allow_text_splitter=true to split based on a non numeric column. This control argument should be the first in an import command.
+--as-textfile, --as-parquetfile, --as-avrodatafile, --as-sequencefile
+-z (--compress), --compression-codec
+--boundary-query "select min(column_name), max(column_name) from table_name where "
+--columns "column1,column2" (No spaces between column names)
+--autoreset-to-one-mapper (Can't use along with split-by)
+--null-string
+--null-non-string
+--fields-terminated-by
+--lines-terminated-by
+--enclosed-by
+--optionally-enclosed-by
+--mysql-delimiters
+--escaped-by
+--where
+
+
+FREE FORM QUERY IMPORT
+--query "query..." (No table name, no column names, use target-dir instead of warehouse-dir, should specify \$CONDITIONS, must specify --split-by column_name)
+Example:
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--target-dir /user/mandy/sqoop_import/retail_db \
+	--num-mappers 2 \
+	--query "select o.*, sum(oi.order_item_subtotal) as order_revenue from orders i, order_items oi where i.order_id = oi.order_item_order_id and \$CONDITIONS group by o.order_id, o.order_date, o.order_customer_id, o.order_status" \
+	--split-by order_id
+
+INCREMENTAL LOAD using query and where 
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--target-dir /user/mandy/sqoop_import/orders \
+	--num-mappers 2 \
+	--query "select * from orders where order_date like '2013-%' and \$CONDITIONS' \
+	--split-by order_id
+
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--target-dir /user/mandy/sqoop_import/orders \
+	--num-mappers 2 \
+	--query "select * from orders where order_date like '2014-01%' and \$CONDITIONS' \
+	--split-by order_id
+	--append
+
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--target-dir /user/mandy/sqoop_import/orders \
+	--num-mappers 2 \
+	--table orders \
+	--where "order_date like '2014-02%'" \
+	--append
+
+INCREMENTAL LOAD 
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--target-dir /user/mandy/sqoop_import/orders \
+	--num-mappers 2 \
+	--table orders \
+	--check-column "order_date" \
+	--incremental append \
+	--last-value '2014-02-28' 
+
+HIVE IMPORT
+sqoop import \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--table order_items \
+	--hive-import \
+	--hive-database sqoop_import \
+	--hive-table order_items \
+	-m 2
+
+SQOOP control arguments for HIVE IMPORT
+--hive-overwrite 
+--create-hive-table (job will fail if table already exists. Cannot use along with overwrite)
+
+IMPORT ALL TABLES
+Must have warehouse-dir
+Good to have autoreset-to-one-mapper
+
+sqoop import-all-tables \
+	--connect jdbc:mysql://localhost/retail_db \
+	--username root \
+	-P \
+	--warehouse-dir /user/mandy/sqoop_import/retail_db \
+	--autoreset-to-one-mapper
+
+EXPORT
+sqoop export \
+	--connect jdbc:mysql://localhost/retail_export \
+	--username root \
+	-P \
+	--export-dir /user/hive/warehouse/sqoop_import.db/daily_revenue \
+	--table daily_revenue \
+	--input-fields-terminated-by "\001"
+
+EXPORT COLUMN MAPPING
+
+create table daily_revenue_demo_column_mapping (revenue float, order_date varchar(30), description varchar(200));
+
+sqoop export \
+	--connect jdbc:mysql://localhost/retail_export \
+	--username root \
+	-P \
+	--export-dir /user/hive/warehouse/sqoop_import.db/daily_revenue \
+	--table daily_revenue_demo_column_mapping \
+	--columns order_date,revenue \
+	--input-fields-terminated-by "\001"
+
+(EXPORT) UPDATE
+--update-key
+--update-mode (updateonly or allowinsert)
+
+sqoop export \
+	--connect jdbc:mysql://localhost/retail_export \
+	--username root \
+	-P \
+	--export-dir /user/hive/warehouse/sqoop_import.db/daily_revenue \
+	--table daily_revenue_demo_column_mapping \
+	--columns order_date,revenue \
+	--input-fields-terminated-by "\001" \
+	--update-key order_date \
+	--update-mode allowinsert
+
+STAGE TABLES
+
+create table daily_revenue_stage (order_date varchar(30) primary key, revenue float);
+
+sqoop export \
+	--connect jdbc:mysql://localhost/retail_export \
+	--username root \
+	-P \
+	--export-dir /user/hive/warehouse/sqoop_import.db/daily_revenue \
+	--table daily_revenue \
+	--staging-table daily_revenue_stage \
+	--clear-staging-table \
+	--input-fields-terminated-by "\001"
+
